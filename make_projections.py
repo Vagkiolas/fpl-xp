@@ -18,13 +18,14 @@ Model (deliberately simple, to be replaced step by step):
 Usage:
     python make_projections.py                       # next 8 GWs -> projections.csv
     python make_projections.py --horizon 6 --out ../open-fpl-solver/data/myxp.csv
-    python make_projections.py --save-raw raw/       # also keep the API snapshots
-    python make_projections.py --offline raw/        # rebuild from saved snapshots
+    python make_projections.py --save-raw raw        # also keep a snapshot in raw/<season>/gw<N>/
+    python make_projections.py --offline raw/2026-27/gw10   # rebuild from a saved snapshot
 """
 
 import argparse
 import json
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -48,16 +49,35 @@ def fetch(endpoint):
     return r.json()
 
 
+def season_name(bootstrap):
+    """'2026-27' from the year of the GW1 deadline."""
+    year = int(bootstrap["events"][0]["deadline_time"][:4])
+    return f"{year}-{(year + 1) % 100:02d}"
+
+
+def load_snapshot(folder):
+    d = Path(folder)
+    return json.loads((d / "bootstrap.json").read_text(encoding="utf-8")), \
+        json.loads((d / "fixtures.json").read_text(encoding="utf-8"))
+
+
+def save_snapshot(base_dir, bootstrap, fixtures):
+    """Save to <base_dir>/<season>/gw<N>/, N = the upcoming GW. Re-running in the same week overwrites,
+    so the snapshot always holds the latest pre-deadline information."""
+    d = Path(base_dir) / season_name(bootstrap) / f"gw{next_gameweek(bootstrap)}"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "bootstrap.json").write_text(json.dumps(bootstrap), encoding="utf-8")
+    (d / "fixtures.json").write_text(json.dumps(fixtures), encoding="utf-8")
+    (d / "meta.json").write_text(json.dumps({"saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}))
+    return d
+
+
 def load_data(offline_dir=None, save_dir=None):
     if offline_dir:
-        d = Path(offline_dir)
-        return json.loads((d / "bootstrap.json").read_text()), json.loads((d / "fixtures.json").read_text())
+        return load_snapshot(offline_dir)
     bootstrap, fixtures = fetch("bootstrap-static"), fetch("fixtures")
     if save_dir:
-        d = Path(save_dir)
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "bootstrap.json").write_text(json.dumps(bootstrap))
-        (d / "fixtures.json").write_text(json.dumps(fixtures))
+        print(f"Snapshot saved to {save_snapshot(save_dir, bootstrap, fixtures)}")
     return bootstrap, fixtures
 
 
@@ -156,8 +176,8 @@ def main():
     ap = argparse.ArgumentParser(description="v0 FPL projections -> CSV for open-fpl-solver")
     ap.add_argument("--horizon", type=int, default=8, help="number of gameweeks to project (default 8)")
     ap.add_argument("--out", default="projections.csv", help="output CSV path")
-    ap.add_argument("--save-raw", metavar="DIR", help="also save the API responses to DIR")
-    ap.add_argument("--offline", metavar="DIR", help="read saved API responses from DIR instead of the internet")
+    ap.add_argument("--save-raw", metavar="DIR", help="also save a snapshot to DIR/<season>/gw<N>/ (e.g. --save-raw raw)")
+    ap.add_argument("--offline", metavar="DIR", help="read a saved snapshot folder instead of the internet")
     args = ap.parse_args()
 
     bootstrap, fixtures = load_data(args.offline, args.save_raw)

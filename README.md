@@ -14,9 +14,10 @@ FPL API ──> make_projections.py ──> myxp.csv ──> open-fpl-solver ─
 ## Quick start
 
 ```bash
-pip install -r requirements.txt
-python make_projections.py --horizon 8 --out ../open-fpl-solver/data/myxp.csv
+uv run --with-requirements requirements.txt python make_projections.py --horizon 8 --out ../open-fpl-solver/data/myxp.csv --save-raw raw
 ```
+
+(or `pip install -r requirements.txt` and plain `python ...`)
 
 Then in `open-fpl-solver/data/user_settings.json`:
 
@@ -61,6 +62,7 @@ Double gameweeks sum both fixtures; blank gameweeks give 0.
 - [ ] FDR is coarse → replace with a Poisson team-goals model (attack/defence strengths, home advantage)
 - [ ] Split points into components: goals (xG), assists (xA), clean sheets, defensive contributions, bonus
 - [ ] Better minutes model (rotation, returning from injury)
+- [x] Weekly snapshots + evaluation against actual points and FPL's `ep_next`
 - [ ] Backtest on past seasons and tune the parameters
 - [ ] Sensitivity tools: exact tolerance ranges per player, "what if X is out" analysis
 
@@ -69,8 +71,31 @@ Double gameweeks sum both fixtures; blank gameweeks give 0.
 ```
 --horizon N        number of gameweeks to project (default 8)
 --out PATH         output CSV (default projections.csv)
---save-raw DIR     also save the API responses (bootstrap.json, fixtures.json)
---offline DIR      rebuild from saved responses, no internet needed
+--save-raw DIR     also save a snapshot of the API to DIR/<season>/gw<N>/ (N = upcoming GW)
+--offline DIR      rebuild from a saved snapshot folder, no internet needed
 ```
 
-Saving raw snapshots every week builds up your own history for backtesting later.
+## Snapshots and evaluation
+
+Run with `--save-raw raw` every week before the deadline. Each snapshot keeps what was known
+*before* the deadline (prices, injury flags, fixtures) - information the API later overwrites.
+Re-running in the same week overwrites that week's snapshot with fresher data.
+
+```
+raw/2026-27/gw10/   bootstrap.json  fixtures.json  meta.json
+raw/2026-27/gw11/   ...
+```
+
+With two consecutive snapshots you can score the model:
+
+```bash
+python evaluate.py raw/2026-27            # MAE / RMSE per GW + whole period
+python evaluate.py raw/2026-27 --gw 10    # one GW: by position, biggest misses
+python evaluate.py raw/2026-27 --csv eval.csv
+```
+
+- actual points of GW N = `total_points` in snapshot N+1 minus snapshot N
+- predictions are recomputed with the *current* model from snapshot N only, so after changing the
+  model, re-running `evaluate.py` is an honest backtest (no look-ahead)
+- FPL's own `ep_next` is scored on the same players as a benchmark
+- only players predicted to play or who actually played are counted
